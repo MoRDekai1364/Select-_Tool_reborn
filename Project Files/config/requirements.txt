@@ -1,0 +1,14 @@
+# Select+ V3 - Python Dependencies
+
+# Document processing
+python-docx>=0.8.11
+
+# Audio processing
+pydub>=0.25.1
+
+# Video processing
+moviepy>=1.0.3
+
+# Note: Some features may require additional system dependencies:
+# - For audio processing: ffmpeg
+# - For video processing: ffmpeg, ImageIO-ffmpeg

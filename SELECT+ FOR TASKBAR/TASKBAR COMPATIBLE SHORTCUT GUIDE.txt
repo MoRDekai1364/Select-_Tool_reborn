@@ -1,0 +1,13 @@
+Guide: Pin Batch File to Taskbar
+ * create shortcut:
+   * right-click on desktop
+   * select "new" > "shortcut"
+ * enter target:
+   * in the location field, type: cmd /c "FULL_PATH_TO_YOUR_BATCH_FILE.bat"
+   * replace FULL_PATH_TO_YOUR_BATCH_FILE.bat with your actual batch file path (e.g., "D:\Apps\SelectPlus_V3\Project Files\scripts\SelectPlus_V3.2.bat")
+   * click "next"
+ * name shortcut:
+   * give your shortcut a name
+   * click "finish"
+ * pin to taskbar:
+   * drag the newly created shortcut from your desktop to your taskbar
