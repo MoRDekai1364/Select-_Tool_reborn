@@ -1,513 +1,881 @@
-"""
-Select+ V3.3 - Enhanced File Manager with Advanced Features
-
-Version 3.3 Features:
-- Portable by design: Includes fixes for ffmpeg and other dependencies.
-- Interactive file browser with keyboard navigation
-- Enhanced extension handling for file creation and renaming
-- Context menu with all file operations (accessible via O key)
-- Comprehensive file management tools
-- Advanced search and organization capabilities
-- Global search with Ctrl+S hotkey
-- Enhanced search interface with multiple options
-- Improved navigation history management
-- Enhanced Media Handling with compatible file filtering
-- Image Processing module with resize, convert, optimize, and gallery features
-- Lazy loading for faster startup times.
-
-Date: 2025-08-01
-"""
+# ##############################################################################
+# #                                                                            #
+# #                SelectPlus v3.3 - Enhanced Console File Manager             #
+# #                                                                            #
+# ##############################################################################
 
 import os
 import sys
-import msvcrt
 import json
+import time
+import shutil
+import atexit
+import hashlib
+import tempfile
+import threading
+import subprocess
 from datetime import datetime
 
-# --- Lazy Module Importers ---
-# These functions prevent heavy libraries from being loaded until they are actually needed,
-# resulting in a faster application startup time.
-
-_shutil = None
-_zipfile = None
-_time = None
-_subprocess = None
-_stat = None
-_ctypes = None
-_Document = None
-_AudioSegment = None
-_VideoFileClip = None
+# --- Lazy Loading for Optional Dependencies ---
 _Image = None
-
-def get_shutil():
-    """Lazily imports and returns the shutil module."""
-    global _shutil
-    if _shutil is None:
-        import shutil
-        _shutil = shutil
-    return _shutil
-
-def get_zipfile():
-    """Lazily imports and returns the zipfile module."""
-    global _zipfile
-    if _zipfile is None:
-        import zipfile
-        _zipfile = zipfile
-    return _zipfile
-
-def get_time():
-    """Lazily imports and returns the time module."""
-    global _time
-    if _time is None:
-        import time
-        _time = time
-    return _time
-
-def get_subprocess():
-    """Lazily imports and returns the subprocess module."""
-    global _subprocess
-    if _subprocess is None:
-        import subprocess
-        _subprocess = subprocess
-    return _subprocess
-
-def get_stat():
-    """Lazily imports and returns the stat module."""
-    global _stat
-    if _stat is None:
-        import stat
-        _stat = stat
-    return _stat
-
-def get_ctypes():
-    """Lazily imports and returns the ctypes module."""
-    global _ctypes
-    if _ctypes is None:
-        if os.name == 'nt':
-            import ctypes
-            _ctypes = ctypes
-    return _ctypes
-
-def get_document():
-    """Lazily imports and returns the Document class from python-docx."""
-    global _Document
-    if _Document is None:
-        from docx import Document
-        _Document = Document
-    return _Document
-
-def get_audio_segment():
-    """Lazily imports and returns the AudioSegment class from pydub."""
-    global _AudioSegment
-    if _AudioSegment is None:
-        from pydub import AudioSegment
-        _AudioSegment = AudioSegment
-    return _AudioSegment
-
-def get_video_file_clip():
-    """Lazily imports and returns the VideoFileClip class from moviepy."""
-    global _VideoFileClip
-    if _VideoFileClip is None:
-        from moviepy.editor import VideoFileClip
-        _VideoFileClip = VideoFileClip
-    return _VideoFileClip
+_AudioSegment = None
 
 def get_pil_image():
     """Lazily imports and returns the Image class from Pillow."""
     global _Image
     if _Image is None:
-        from PIL import Image
-        _Image = Image
+        try:
+            from PIL import Image
+            _Image = Image
+        except ImportError:
+            pass # Will be handled by the functions that need it
     return _Image
+
+def get_audio_segment():
+    """Lazily imports and returns the AudioSegment class from pydub."""
+    global _AudioSegment
+    if _AudioSegment is None:
+        try:
+            from pydub import AudioSegment
+            _AudioSegment = AudioSegment
+        except ImportError:
+            pass # Will be handled by the functions that need it
+    return _AudioSegment
 
 def configure_ffmpeg():
     """
-    Locates the bundled ffmpeg executable required for media operations and configures
-    the necessary libraries to use it. This makes the application portable.
+    Locates the ffmpeg executable required for media operations and configures
+    the necessary libraries to use it. This version checks the script's installation directory.
     """
     try:
         AudioSegment = get_audio_segment()
         if AudioSegment is None:
-            print("[WARN] pydub library not found. Cannot configure ffmpeg.")
+            # This is not an error, just means media features are off
             return False
 
-        # The executable is expected to be in a 'bin' directory at the root
-        # of the portable installation, two levels up from this 'src' directory.
-        base_path = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-        ffmpeg_path = os.path.join(base_path, "bin", "ffmpeg.exe")
+        # For system-wide install, ffmpeg.exe is in the parent directory of 'src'
+        # __file__ is .../SelectPlus/src/SelectPlus_V3.3.py
+        # os.path.dirname(__file__) is .../SelectPlus/src
+        # os.path.dirname(os.path.dirname(__file__)) is .../SelectPlus
+        base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        ffmpeg_path = os.path.join(base_path, "ffmpeg.exe")
 
         if os.path.exists(ffmpeg_path):
-            print("[INFO] Found bundled ffmpeg. Configuring for media operations.")
             # Explicitly tell pydub where to find ffmpeg
             AudioSegment.converter = ffmpeg_path
             return True
         else:
-            print("[WARNING] ffmpeg.exe not found in 'bin' directory. Media features will fail.")
+            # Fallback for portable dev environment
+            portable_bin_path = os.path.join(os.path.dirname(base_path), "bin", "ffmpeg.exe")
+            if os.path.exists(portable_bin_path):
+                 AudioSegment.converter = portable_bin_path
+                 return True
             return False
-    except ImportError:
-        print("[WARNING] pydub library not found. Media features will be disabled.")
-        return False
-    except Exception as e:
-        print(f"[ERROR] Could not configure ffmpeg: {e}")
+    except Exception:
         return False
 
 # Version information
 VERSION = "3.3"
-VERSION_DATE = "2025-08-01"
 
-class LanguageManager:
-    """Manages language settings and translations for the application."""
+# --- Global State & Configuration ---
+class AppState:
     def __init__(self):
-        config_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config')
-        self.settings_file = os.path.join(config_dir, "selectplus_settings.json")
-        self.current_language = "en"
-        self.load_settings()
-        
-        # Translation dictionary (abbreviated for brevity)
-        self.translations = {
-            "en": {
-                "app_title": "SELECT+ V{} - MAIN MENU ({})",
-                "general_browsing_and_management": "📂 General Browsing & Management",
-                "content_management": "📝 Content Management",
-                "organization_automation": "📦 Organization & Automation",
-                "media_handling": "🎬 Media Handling",
-                "image_processing": "🖼️ Image Processing",
-                "information_misc": "📊 Information & Misc",
-                "settings": "⚙️ Settings",
-                "exit_application": "📛 Exit Application",
-                "file_browser": "FILE BROWSER", "location": "📍 Location",
-                "showing_items": "📄 Showing {}-{} of {} items",
-                "showing_all": "📄 Showing all {} items",
-                "empty_directory": "📂 Empty directory",
-                "more_above": "⬆️ More items above...",
-                "more_below": "⬇️ More items below...",
-                 "yes": "✅ Yes", "no": "❌ No", "back": "🔙 Back", "cancel": "❌ Cancel",
-                 "cut": "✂️ Cut", "copy": "📋 Copy", "paste": "📌 Paste", "delete": "🗑️ Delete", "rename": "✏️ Rename",
-                 "operation_successful": "✅ Operation completed successfully", "operation_failed": "❌ Operation failed",
-                 "file_created": "✅ File '{}' created successfully", "folder_created": "✅ Folder '{}' created successfully",
-                 "exiting_app": "👋 Exiting Select+ App. Goodbye!",
-            },
-            "bg": {
-                "app_title": "SELECT+ V{} - ГЛАВНО МЕНЮ ({})",
-                "general_browsing_and_management": "📂 Общо разглеждане и управление",
-                "content_management": "📝 Управление на съдържание",
-                "organization_automation": "📦 Организация и автоматизация",
-                "media_handling": "🎬 Работа с медия",
-                "image_processing": "🖼️ Обработка на изображения",
-                "information_misc": "📊 Информация и разни",
-                "settings": "⚙️ Настройки",
-                "exit_application": "📛 Излез от приложението",
-                "file_browser": "ФАЙЛОВ БРАУЗЪР", "location": "📍 Местоположение",
-                "showing_items": "📄 Показване на {}-{} от {} елемента",
-                "showing_all": "📄 Показване на всички {} елемента",
-                "empty_directory": "📂 Празна директория",
-                "more_above": "⬆️ Повече елементи отгоре...",
-                "more_below": "⬇️ Повече елементи отдолу...",
-                "yes": "✅ Да", "no": "❌ Не", "back": "🔙 Обратно", "cancel": "❌ Отказ",
-                "cut": "✂️ Изрежи", "copy": "📋 Копирай", "paste": "📌 Постави", "delete": "🗑️ Изтрий", "rename": "✏️ Преименувай",
-                "operation_successful": "✅ Операцията е завършена успешно", "operation_failed": "❌ Операцията е неуспешна",
-                "file_created": "✅ Файлът '{}' е създаден успешно", "folder_created": "✅ Папката '{}' е създадена успешно",
-                "exiting_app": "👋 Излизане от Select+ App. Довиждане!",
-            }
-        }
+        self.current_directory = os.getcwd()
+        self.history = [self.current_directory]
+        self.history_position = 0
+        self.selection = []
+        self.clipboard = []
+        self.clipboard_mode = None  # 'copy' or 'cut'
+        self.last_find_results = []
+        self.view_mode = "columns"
+        self.show_hidden = False
+        self.settings = self.load_settings()
+        self.ffmpeg_configured = configure_ffmpeg()
+        self.running = True
+        self.lock = threading.Lock()
+        self.background_tasks = {}
 
     def load_settings(self):
-        """Load language settings from file."""
+        """Loads settings from a JSON file."""
         try:
-            if os.path.exists(self.settings_file):
-                with open(self.settings_file, 'r', encoding='utf-8') as f:
-                    settings = json.load(f)
-                    self.current_language = settings.get('language', 'en')
-        except Exception as e:
-            print(f"Error loading settings: {e}")
-            self.current_language = "en"
+            # Path relative to the script's location
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            config_path = os.path.join(script_dir, '..', 'config', 'selectplus_settings.json')
+            with open(config_path, 'r') as f:
+                return json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return {
+                "show_full_path": False,
+                "default_sort": "name",
+                "show_confirmation": True,
+                "enable_media_info": True,
+                "fast_dir_size": True
+            }
+
+    def get_setting(self, key, default=None):
+        """Safely gets a setting value."""
+        return self.settings.get(key, default)
+
+state = AppState()
+
+# --- Utility Functions ---
+
+def format_size(size_bytes):
+    """Formats a size in bytes to a human-readable string."""
+    if size_bytes is None:
+        return "N/A"
+    if size_bytes < 1024:
+        return f"{size_bytes} B"
+    for unit in ['KB', 'MB', 'GB', 'TB']:
+        size_bytes /= 1024.0
+        if size_bytes < 1024.0:
+            return f"{size_bytes:.2f} {unit}"
+    return f"{size_bytes:.2f} PB"
+
+def get_terminal_width():
+    """Gets the width of the terminal."""
+    try:
+        return os.get_terminal_size().columns
+    except OSError:
+        return 80  # Default width
+
+def clear_screen():
+    """Clears the console screen."""
+    os.system('cls' if os.name == 'nt' else 'clear')
+
+def print_header():
+    """Prints the application header and current path."""
+    width = get_terminal_width()
+    path = state.current_directory if state.get_setting("show_full_path") else os.path.basename(state.current_directory)
+    if not state.get_setting("show_full_path") and state.current_directory.strip().endswith((':', ':/', ':\\')):
+         path = state.current_directory # Show full path for root drives
+    header_text = f" SelectPlus v{VERSION} | Path: {path} "
     
-    def save_settings(self):
-        """Save language settings to file."""
-        try:
-            settings = {'language': self.current_language}
-            os.makedirs(os.path.dirname(self.settings_file), exist_ok=True)
-            with open(self.settings_file, 'w', encoding='utf-8') as f:
-                json.dump(settings, f, ensure_ascii=False, indent=2)
-        except Exception as e:
-            print(f"Error saving settings: {e}")
+    # Ensure header doesn't exceed terminal width
+    if len(header_text) > width - 2:
+        max_path_len = width - (len(header_text) - len(path)) - 5
+        path = "..." + path[-max_path_len:]
+        header_text = f" SelectPlus v{VERSION} | Path: {path} "
+
+    print("=" * width)
+    print(header_text.center(width))
+    print("=" * width)
     
-    def set_language(self, language_code):
-        """Set the current language."""
-        if language_code in self.translations:
-            self.current_language = language_code
-            self.save_settings()
-            return True
-        return False
-    
-    def get_text(self, key, *args):
-        """Get translated text for the given key."""
-        # Fallback to English if a key is missing in the current language
-        text = self.translations.get(self.current_language, {}).get(key)
-        if text is None:
-            text = self.translations.get("en", {}).get(key, key)
+    # Show selection info
+    if state.selection:
+        print(f"[{len(state.selection)} item(s) selected]".center(width))
+    if state.clipboard:
+        mode = "CUT" if state.clipboard_mode == 'cut' else "COPY"
+        print(f"[{len(state.clipboard)} item(s) on clipboard ({mode})]".center(width))
+
+def get_directory_contents(path):
+    """Gets and sorts the contents of a directory."""
+    try:
+        all_files = os.listdir(path)
+        if not state.show_hidden:
+            all_files = [f for f in all_files if not f.startswith('.')]
         
-        if args:
-            return text.format(*args)
-        return text
+        dirs = sorted([d for d in all_files if os.path.isdir(os.path.join(path, d))], key=str.lower)
+        files = sorted([f for f in all_files if not os.path.isdir(os.path.join(path, f))], key=str.lower)
 
-# Global language manager instance
-lang = LanguageManager()
+        return dirs, files
+    except PermissionError:
+        print("\n[ERROR] Permission denied.")
+        return [], []
+    except FileNotFoundError:
+        print("\n[ERROR] Directory not found.")
+        return [], []
 
-class InteractiveHandler:
-    """Handles all console input and interactive UI rendering."""
-    def __init__(self):
-        self.KEY_UP = 72
-        self.KEY_DOWN = 80
-        self.KEY_LEFT = 75
-        self.KEY_RIGHT = 77
-        self.KEY_ENTER = 13
-        self.KEY_ESC = 27
-        self.KEY_BACKSPACE = 8
-        self.KEY_DELETE = 83
-        self.KEY_HOME = 71
-        self.KEY_END = 79
-        self.KEY_PAGEUP = 73
-        self.KEY_PAGEDOWN = 81
-        self.KEY_FN_S = 115
+def get_item_properties(item_path):
+    """Gets properties (size, modification date) for a file or directory."""
+    try:
+        stat = os.stat(item_path)
+        mod_time = datetime.fromtimestamp(stat.st_mtime).strftime('%Y-%m-%d %H:%M')
+        if os.path.isdir(item_path):
+            if state.get_setting('fast_dir_size', True):
+                return 'DIR', mod_time
+            size = get_directory_size(item_path)
+            return format_size(size), mod_time
+        else:
+            return format_size(stat.st_size), mod_time
+    except (FileNotFoundError, PermissionError):
+        return 'N/A', 'N/A'
 
-    def wait_for_key(self):
-        """Wait for a single keypress and return its ASCII value."""
-        key = msvcrt.getch()
-        if key in (b'\x00', b'\xe0'):  # Special keys
-            key = msvcrt.getch()
-        elif key == b'\x13':  # Ctrl+S
-            return self.KEY_FN_S
-        return ord(key)
+def get_directory_size(path):
+    """Recursively calculates the size of a directory."""
+    total_size = 0
+    try:
+        for dirpath, _, filenames in os.walk(path):
+            for f in filenames:
+                fp = os.path.join(dirpath, f)
+                if not os.path.islink(fp):
+                    total_size += os.path.getsize(fp)
+    except (PermissionError, FileNotFoundError):
+        return None
+    return total_size
 
-    def hide_cursor(self):
-        """Hide the console cursor on Windows."""
-        ctypes = get_ctypes()
-        if ctypes:
-            kernel32 = ctypes.windll.kernel32
-            h = kernel32.GetStdHandle(-11)
-            class CONSOLE_CURSOR_INFO(ctypes.Structure):
-                _fields_ = [("dwSize", ctypes.wintypes.DWORD), ("bVisible", ctypes.wintypes.BOOL)]
-            cci = CONSOLE_CURSOR_INFO()
-            kernel32.GetConsoleCursorInfo(h, ctypes.byref(cci))
-            cci.bVisible = False
-            kernel32.SetConsoleCursorInfo(h, ctypes.byref(cci))
+# --- Display Functions ---
+
+def display_columns():
+    """Displays directory contents in a multi-column format."""
+    width = get_terminal_width()
+    dirs, files = get_directory_contents(state.current_directory)
+    items = dirs + files
+
+    if not items:
+        print("\n< Empty Directory >".center(width))
+        return
+
+    # Calculate column layout
+    max_len = max(len(item) for item in items) if items else 0
+    col_width = max_len + 4  # Name + index + padding
+    num_cols = max(1, width // col_width)
+    num_rows = (len(items) + num_cols - 1) // num_cols
+
+    for i in range(num_rows):
+        for j in range(num_cols):
+            index = i + j * num_rows
+            if index < len(items):
+                item = items[index]
+                display_index = index + 1
+                is_dir = os.path.isdir(os.path.join(state.current_directory, item))
+                indicator = " [D]" if is_dir else ""
+                
+                # Truncate if necessary
+                available_space = col_width - len(f"{display_index}. ") - len(indicator) - 1
+                display_item = item if len(item) <= available_space else item[:available_space-3] + "..."
+
+                # Highlight selected items
+                prefix = "*" if item in state.selection else " "
+                
+                print(f"{prefix}{display_index:<3}. {display_item}{indicator}".ljust(col_width), end="")
+        print() # Newline after each row
+
+def display_list():
+    """Displays directory contents in a detailed list format."""
+    width = get_terminal_width()
+    dirs, files = get_directory_contents(state.current_directory)
+    items = dirs + files
+
+    if not items:
+        print("\n< Empty Directory >".center(width))
+        return
+
+    # Prepare data for display
+    display_data = []
+    max_name_len = 0
+    for i, item in enumerate(items):
+        item_path = os.path.join(state.current_directory, item)
+        size, mod_time = get_item_properties(item_path)
+        is_dir = size == 'DIR'
+        
+        display_data.append({
+            "index": i + 1,
+            "name": item,
+            "size": "—" if is_dir else size,
+            "type": "Folder" if is_dir else "File",
+            "modified": mod_time,
+            "is_dir": is_dir
+        })
+        if len(item) > max_name_len:
+            max_name_len = len(item)
     
-    def show_cursor(self):
-        """Show the console cursor on Windows."""
-        ctypes = get_ctypes()
-        if ctypes:
-            kernel32 = ctypes.windll.kernel32
-            h = kernel32.GetStdHandle(-11)
-            class CONSOLE_CURSOR_INFO(ctypes.Structure):
-                _fields_ = [("dwSize", ctypes.wintypes.DWORD), ("bVisible", ctypes.wintypes.BOOL)]
-            cci = CONSOLE_CURSOR_INFO()
-            kernel32.GetConsoleCursorInfo(h, ctypes.byref(cci))
-            cci.bVisible = True
-            kernel32.SetConsoleCursorInfo(h, ctypes.byref(cci))
+    # Calculate column widths
+    size_col_width = max(len(d['size']) for d in display_data) if display_data else 5
+    type_col_width = 7 # "Folder"
+    mod_col_width = 17 # YYYY-MM-DD HH:MM
+    
+    # Header
+    print(f"\n {'#':<4} {'Name':<{max_name_len}} {'Size':>{size_col_width}}  {'Type':<{type_col_width}}  {'Modified':<{mod_col_width}}")
+    print("-" * width)
 
-    def clear_screen_fast(self):
-        """Fast screen clearing for a smoother experience."""
-        os.system('cls' if os.name == 'nt' else 'clear')
+    for data in display_data:
+        prefix = "*" if data['name'] in state.selection else " "
+        
+        # Truncate name if it's too long
+        name_width_available = width - (4 + size_col_width + type_col_width + mod_col_width + 10)
+        display_name = data['name']
+        if len(display_name) > name_width_available:
+            display_name = display_name[:name_width_available-3] + "..."
 
-    def show_interactive_menu(self, title, options, selected_index=0, show_help=True, context_path=None):
-        """Display an interactive menu with arrow key navigation."""
-        # Implementation is complex and long, but assumed to be correct from original file
-        # This is a placeholder for the actual menu logic.
-        self.clear_screen_fast()
-        print("\n" + "═" * 80)
-        print(f"🎯 {title}")
-        print("═" * 80)
-        for i, option in enumerate(options):
-            if i == selected_index:
-                print(f"➤ {i + 1}. {option}  ⬅️")
+        print(f"{prefix}{data['index']:<3} {display_name:<{name_width_available}} "
+              f"{data['size']:>{size_col_width}}  "
+              f"{data['type']:<{type_col_width}}  "
+              f"{data['modified']:<{mod_col_width}}")
+
+def refresh_display():
+    """Clears the screen and redisplays the content."""
+    clear_screen()
+    print_header()
+    if state.view_mode == "columns":
+        display_columns()
+    else:
+        display_list()
+    print("\n" + "-" * get_terminal_width())
+    print("Type 'help' for a list of commands.")
+
+# --- File Operations ---
+
+def change_directory(target):
+    """Changes the current directory."""
+    new_path = ""
+    if target == "..":
+        new_path = os.path.dirname(state.current_directory)
+    elif target == "-":
+        # Go to previous directory in history
+        if len(state.history) > 1:
+            state.history_position = max(0, state.history_position -1) if state.history_position > 0 else len(state.history)-2
+            new_path = state.history[state.history_position]
+        else:
+            print("[INFO] No previous directory in history.")
+            return
+    elif os.path.isabs(target):
+        new_path = target
+    else:
+        new_path = os.path.join(state.current_directory, target)
+
+    if os.path.isdir(new_path):
+        try:
+            # Test if we can list the directory before changing
+            os.listdir(new_path)
+            state.current_directory = os.path.normpath(new_path)
+            # Update history
+            if state.history[-1] != state.current_directory:
+                state.history.append(state.current_directory)
+            state.history_position = len(state.history) - 1
+            state.selection.clear()
+        except PermissionError:
+            print("[ERROR] Permission denied.")
+    else:
+        print(f"[ERROR] Directory not found: {new_path}")
+
+def handle_selection(args):
+    """Handles adding/removing items from selection."""
+    dirs, files = get_directory_contents(state.current_directory)
+    items = dirs + files
+
+    if not args or args[0].lower() == 'clear':
+        state.selection.clear()
+        print("Selection cleared.")
+        return
+    if args[0].lower() == 'all':
+        state.selection = list(items)
+        print("All items selected.")
+        return
+    if args[0].lower() == 'invert':
+        new_selection = [item for item in items if item not in state.selection]
+        state.selection = new_selection
+        print("Selection inverted.")
+        return
+
+    for arg in args:
+        try:
+            if '-' in arg: # Range selection
+                start, end = map(int, arg.split('-'))
+                for i in range(start, end + 1):
+                    if 1 <= i <= len(items):
+                        item = items[i-1]
+                        if item not in state.selection:
+                            state.selection.append(item)
             else:
-                print(f"  {i + 1}. {option}")
-        print("\n" + "─" * 80)
-        # Simplified for brevity
-        while True:
-            key = self.wait_for_key()
-            if key == self.KEY_UP:
-                selected_index = (selected_index - 1 + len(options)) % len(options)
-                return self.show_interactive_menu(title, options, selected_index, show_help, context_path)
-            elif key == self.KEY_DOWN:
-                selected_index = (selected_index + 1) % len(options)
-                return self.show_interactive_menu(title, options, selected_index, show_help, context_path)
-            elif key == self.KEY_ENTER:
-                return selected_index
-            elif key == self.KEY_ESC or key == self.KEY_BACKSPACE:
-                return None
-            elif 49 <= key <= 57 and (key - 49) < len(options):
-                return key - 49
+                index = int(arg)
+                if 1 <= index <= len(items):
+                    item = items[index-1]
+                    if item in state.selection:
+                        state.selection.remove(item)
+                    else:
+                        state.selection.append(item)
+        except (ValueError, IndexError):
+            print(f"[ERROR] Invalid index or range: {arg}")
 
-    def show_file_browser(self, current_path, items, selected_index=0, sort_info="", history_info="", viewport_start=0, selected_items=None):
-        """Displays the file browser UI."""
-        # Full implementation is very long; this is a conceptual representation
-        self.clear_screen_fast()
-        print(f"🗂️  {lang.get_text('file_browser')} - {current_path}")
-        print("═" * 80)
-        
-        # ... logic to display files, viewport, controls, etc. ...
-
-        key = self.wait_for_key()
-        
-        # ... logic to handle key presses and return action ...
-        # This is a simplified representation of the complex key handling
-        if key == self.KEY_UP: return ('navigate', (selected_index - 1 + len(items)) % len(items), viewport_start)
-        if key == self.KEY_DOWN: return ('navigate', (selected_index + 1) % len(items), viewport_start)
-        if key == self.KEY_ENTER: return ('select', selected_index, viewport_start)
-        if key == self.KEY_BACKSPACE: return ('back', selected_index, viewport_start)
-        return ('none', selected_index, viewport_start)
+def confirm_action(prompt):
+    """Asks for user confirmation if the setting is enabled."""
+    if not state.get_setting("show_confirmation", True):
+        return True
     
-    # Other methods like show_confirmation, show_text_input are assumed here...
-    def show_confirmation(self, message, default=True):
-        res = input(f"{message} (Y/n): ").lower()
-        return res == 'y' or (res == '' and default)
-        
-    def show_text_input(self, prompt, default_text="", **kwargs):
-        return input(f"{prompt} [{default_text}]: ") or default_text
+    response = input(f"{prompt} (y/n): ").lower()
+    return response == 'y'
 
+def delete_selected():
+    """Deletes selected files and directories."""
+    if not state.selection:
+        print("[ERROR] No items selected to delete.")
+        return
 
-class EnhancedFileManager:
-    """Handles core file system operations like create, delete, copy, move."""
-    # Assumed to be correct from original file. Uses get_shutil(), get_zipfile() etc.
-    def delete_item(self, path):
-        shutil = get_shutil()
-        if os.path.isfile(path):
-            os.remove(path)
-        elif os.path.isdir(path):
-            shutil.rmtree(path)
-    # ... other file operations ...
-
-class FileManagement:
-    """Manages selections of files for batch operations."""
-    # Assumed to be correct from original file.
-    def __init__(self):
-        self.selected_items = []
-
-class ContentManagement:
-    """Handles file content operations like text extraction."""
-    # Assumed to be correct from original file.
-    def extract_text(self, file_path_input):
-        Document = get_document()
-        # ... implementation ...
-
-class OrganizationAutomation:
-    """Handles automated file organization tasks."""
-    # Assumed to be correct from original file.
-
-class MediaHandling:
-    """Handles audio and video processing tasks."""
-    def extract_audio_segment(self, file_paths_input, start_ms, end_ms, output_prefix="output_audio"):
-        AudioSegment = get_audio_segment()
-        # ... implementation ...
-        
-    def trim_video(self, file_paths_input, start_sec, end_sec, output_prefix="output_video"):
-        VideoFileClip = get_video_file_clip()
-        # ... implementation ...
-    # ... other methods ...
-
-class ImageProcessing:
-    """Handles all image manipulation tasks."""
-    def __init__(self):
-        self.supported_formats = ('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.webp')
-        self.pillow_available = self._check_pillow_availability()
-        if not self.pillow_available:
-            print("[CRITICAL ERROR] Pillow library not found. Image Processing module is disabled.")
-            print("Please run the installer again to fix dependencies.")
-
-    def _check_pillow_availability(self):
+    if not confirm_action(f"Permanently delete {len(state.selection)} item(s)?"):
+        print("Deletion cancelled.")
+        return
+    
+    for item_name in state.selection:
+        item_path = os.path.join(state.current_directory, item_name)
         try:
-            get_pil_image()
-            return True
-        except ImportError:
-            return False
+            if os.path.isdir(item_path):
+                shutil.rmtree(item_path)
+                print(f"Deleted directory: {item_name}")
+            else:
+                os.remove(item_path)
+                print(f"Deleted file: {item_name}")
+        except Exception as e:
+            print(f"[ERROR] Could not delete {item_name}: {e}")
+    state.selection.clear()
 
-    def resize_images(self, image_files, width, height, output_dir=None):
-        if not self.pillow_available:
-            print("Image Processing is disabled because the 'Pillow' library is missing.")
-            get_time().sleep(2)
+def create_item(item_type, name):
+    """Creates a new file or directory."""
+    item_path = os.path.join(state.current_directory, name)
+    if os.path.exists(item_path):
+        print(f"[ERROR] '{name}' already exists.")
+        return
+
+    try:
+        if item_type == "dir":
+            os.makedirs(item_path)
+            print(f"Directory '{name}' created.")
+        else: # file
+            open(item_path, 'a').close()
+            print(f"File '{name}' created.")
+    except Exception as e:
+        print(f"[ERROR] Could not create '{name}': {e}")
+
+def rename_item(old_name_arg, new_name):
+    """Renames a file or directory."""
+    dirs, files = get_directory_contents(state.current_directory)
+    items = dirs + files
+
+    try:
+        # Try to resolve by index first
+        index = int(old_name_arg) - 1
+        if not (0 <= index < len(items)):
+            raise ValueError()
+        old_name = items[index]
+    except (ValueError, IndexError):
+        # Fallback to resolving by name
+        old_name = old_name_arg
+        if old_name not in items:
+            print(f"[ERROR] Item '{old_name}' not found.")
             return
-        Image = get_pil_image()
-        # ... implementation ...
-        
-    def convert_images(self, image_files, target_format, output_dir=None):
-        if not self.pillow_available:
-            print("Image Processing is disabled because the 'Pillow' library is missing.")
-            get_time().sleep(2)
-            return
-        Image = get_pil_image()
-        # ... implementation ...
 
-    def optimize_images(self, image_files, quality=85, output_dir=None):
-        if not self.pillow_available:
-            print("Image Processing is disabled because the 'Pillow' library is missing.")
-            get_time().sleep(2)
-            return
-        Image = get_pil_image()
-        # ... implementation ...
+    old_path = os.path.join(state.current_directory, old_name)
+    new_path = os.path.join(state.current_directory, new_name)
 
-    def create_image_gallery(self, image_files, output_dir=None):
-        if not self.pillow_available:
-            print("Image Processing is disabled because the 'Pillow' library is missing.")
-            get_time().sleep(2)
-            return
-        # ... implementation ...
+    if os.path.exists(new_path):
+        print(f"[ERROR] Destination '{new_name}' already exists.")
+        return
 
-class DirectoryMapper:
-    """Handles creating visual maps of directory structures."""
-    # Assumed to be correct from original file.
+    try:
+        os.rename(old_path, new_path)
+        print(f"Renamed '{old_name}' to '{new_name}'")
+    except Exception as e:
+        print(f"[ERROR] Could not rename: {e}")
 
-class SelectPlusApp:
-    """The main application class that orchestrates all functionality."""
-    def __init__(self):
-        self.file_manager = FileManagement()
-        self.content_manager = ContentManagement()
-        self.org_automation = OrganizationAutomation()
-        self.media_handler = MediaHandling()
-        self.image_processor = ImageProcessing()
-        self.directory_mapper = DirectoryMapper()
-        self.interactive = InteractiveHandler()
-        self.enhanced_file_manager = EnhancedFileManager()
-        # ... other initializations from original file ...
-        self.lang = lang
-        self.clipboard = []
-        self.clipboard_operation = None
-        self.selected_items = []
+def copy_paste_handler(mode):
+    """Handles copy and cut operations."""
+    if not state.selection:
+        print(f"[ERROR] Nothing selected to {mode}.")
+        return
 
-    # All other application methods (_general_browsing_and_management_menu, _content_menu, etc.)
-    # are assumed to be here from the original file, unchanged.
+    state.clipboard = [os.path.join(state.current_directory, item) for item in state.selection]
+    state.clipboard_mode = mode
+    print(f"{len(state.clipboard)} item(s) ready to be {'moved' if mode == 'cut' else 'pasted'}.")
+    state.selection.clear()
+
+def paste_handler():
+    """Handles the paste operation."""
+    if not state.clipboard:
+        print("[ERROR] Clipboard is empty.")
+        return
+
+    destination_dir = state.current_directory
+    print(f"Pasting {len(state.clipboard)} item(s) to {destination_dir}...")
     
-    def run(self):
-        """Main application loop with interactive menu."""
-        while True:
-            # Using only a subset of options for this example
-            options = [
-                lang.get_text("general_browsing_and_management"),
-                lang.get_text("media_handling"),
-                lang.get_text("image_processing"),
-                lang.get_text("exit_application")
-            ]
+    for source_path in state.clipboard:
+        item_name = os.path.basename(source_path)
+        dest_path = os.path.join(destination_dir, item_name)
+
+        if os.path.exists(dest_path):
+            print(f"[WARN] '{item_name}' already exists. Skipping.")
+            continue
+        
+        try:
+            if state.clipboard_mode == 'cut':
+                shutil.move(source_path, dest_path)
+                print(f"Moved: {item_name}")
+            else: # copy
+                if os.path.isdir(source_path):
+                    shutil.copytree(source_path, dest_path)
+                else:
+                    shutil.copy2(source_path, dest_path)
+                print(f"Copied: {item_name}")
+        except Exception as e:
+            print(f"[ERROR] Failed to paste '{item_name}': {e}")
+    
+    # Clear clipboard after cut
+    if state.clipboard_mode == 'cut':
+        state.clipboard.clear()
+        state.clipboard_mode = None
+
+# --- Advanced Features ---
+
+def find_files(pattern):
+    """Finds files/directories matching a pattern recursively."""
+    print(f"Searching for '{pattern}' in {state.current_directory}...")
+    results = []
+    try:
+        for root, dirs, files in os.walk(state.current_directory):
+            for name in dirs + files:
+                if pattern.lower() in name.lower():
+                    full_path = os.path.join(root, name)
+                    results.append(full_path)
+    except Exception as e:
+        print(f"[ERROR] Search failed: {e}")
+        return
+
+    if not results:
+        print("No results found.")
+    else:
+        state.last_find_results = results
+        print(f"Found {len(results)} result(s):")
+        for i, path in enumerate(results):
+            # Make path relative for cleaner display
+            try:
+                display_path = os.path.relpath(path, state.current_directory)
+            except ValueError:
+                display_path = path
+            print(f"  {i+1}. {display_path}")
+
+def get_item_info(item_arg):
+    """Displays detailed information about a file or directory."""
+    dirs, files = get_directory_contents(state.current_directory)
+    items = dirs + files
+    item_name = ""
+
+    try:
+        index = int(item_arg) - 1
+        if 0 <= index < len(items):
+            item_name = items[index]
+        else:
+            print("[ERROR] Invalid index.")
+            return
+    except ValueError:
+        if item_arg in items:
+            item_name = item_arg
+        else:
+            print(f"[ERROR] Item '{item_arg}' not found.")
+            return
+
+    item_path = os.path.join(state.current_directory, item_name)
+    print(f"\n--- Info for: {item_name} ---")
+    
+    try:
+        stat = os.stat(item_path)
+        print(f"  Full Path: {item_path}")
+        print(f"  Type: {'Directory' if os.path.isdir(item_path) else 'File'}")
+        print(f"  Size: {format_size(stat.st_size)}")
+        if os.path.isdir(item_path):
+             size_on_disk = get_directory_size(item_path)
+             print(f"  Size on Disk (recursive): {format_size(size_on_disk)}")
+        
+        print(f"  Created: {datetime.fromtimestamp(stat.st_ctime).strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"  Modified: {datetime.fromtimestamp(stat.st_mtime).strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"  Accessed: {datetime.fromtimestamp(stat.st_atime).strftime('%Y-%m-%d %H:%M:%S')}")
+        
+        # Media info
+        if state.ffmpeg_configured and state.get_setting("enable_media_info"):
+            get_media_info(item_path)
+
+        # Image info
+        Image = get_pil_image()
+        if Image and not os.path.isdir(item_path):
+            try:
+                with Image.open(item_path) as img:
+                    print(f"  Image Info: {img.format}, {img.size[0]}x{img.size[1]}, {img.mode}")
+            except Exception:
+                pass # Not an image or unsupported format
+
+    except FileNotFoundError:
+        print("  [ERROR] File not found.")
+    except Exception as e:
+        print(f"  [ERROR] Could not get info: {e}")
+    print("--------------------------")
+
+def get_media_info(file_path):
+    """Uses ffprobe (via pydub) to get media file information."""
+    AudioSegment = get_audio_segment()
+    if not AudioSegment: return
+
+    try:
+        info = AudioSegment.from_file(file_path).info
+        duration_s = float(info.get('duration', 0))
+        bit_rate_kbps = int(info.get('bit_rate', 0)) / 1000
+        codec = info.get('codec_name', 'N/A')
+        sample_rate = info.get('sample_rate', 'N/A')
+        
+        print(f"  Media Info: Codec: {codec}, Duration: {duration_s:.2f}s, Bitrate: {bit_rate_kbps:.0f} kbps")
+    except Exception:
+        # Fails silently if it's not a media file
+        pass
+
+def open_file(item_arg):
+    """Opens a file or directory with the default system application."""
+    dirs, files = get_directory_contents(state.current_directory)
+    items = dirs + files
+
+    try:
+        index = int(item_arg) - 1
+        if not (0 <= index < len(items)):
+            raise ValueError()
+        item_name = items[index]
+    except ValueError:
+        item_name = item_arg
+        if item_name not in items:
+            print(f"[ERROR] Item '{item_name}' not found.")
+            return
+
+    item_path = os.path.join(state.current_directory, item_name)
+    print(f"Opening '{item_name}'...")
+    try:
+        os.startfile(item_path)
+    except Exception as e:
+        print(f"[ERROR] Could not open file: {e}")
+
+def open_terminal():
+    """Opens a new terminal in the current directory."""
+    try:
+        if sys.platform == "win32":
+            os.system(f"start cmd.exe /K cd /d \"{state.current_directory}\"")
+        elif sys.platform == "darwin":
+            subprocess.run(["open", "-a", "Terminal", state.current_directory])
+        else: # Linux
+            # Try a few common terminals
+            terminals = ["gnome-terminal", "konsole", "xfce4-terminal", "xterm"]
+            for term in terminals:
+                if shutil.which(term):
+                    subprocess.run([term, "--working-directory", state.current_directory])
+                    return
+            print("[ERROR] Could not detect a known terminal emulator.")
+    except Exception as e:
+        print(f"[ERROR] Failed to open new terminal: {e}")
+
+def hash_file(filepath):
+    """Calculates SHA-256 hash of a file."""
+    sha256_hash = hashlib.sha256()
+    try:
+        with open(filepath, "rb") as f:
+            for byte_block in iter(lambda: f.read(4096), b""):
+                sha256_hash.update(byte_block)
+            return sha256_hash.hexdigest()
+    except (FileNotFoundError, PermissionError) as e:
+        print(f"Error reading {os.path.basename(filepath)}: {e}")
+        return None
+
+def find_duplicates():
+    """Finds duplicate files in the current directory and subdirectories based on content hash."""
+    hashes = {}
+    duplicates = {}
+    
+    print("Scanning for duplicate files... (This may take a while)")
+    
+    file_count = 0
+    for dirpath, _, filenames in os.walk(state.current_directory):
+        for filename in filenames:
+            file_path = os.path.join(dirpath, filename)
+            if os.path.islink(file_path) or os.path.getsize(file_path) == 0:
+                continue
             
-            choice = self.interactive.show_interactive_menu(
-                lang.get_text("app_title", VERSION, VERSION_DATE), 
-                options,
-                context_path=os.getcwd()
-            )
-            
-            if choice is None or choice == 3:  # Exit
-                print("\n" + lang.get_text("exiting_app"))
-                break
-            # Conceptual branching
-            # elif choice == 0: self._general_browsing_and_management_menu()
-            # elif choice == 1: self._media_menu()
-            # elif choice == 2: self._image_processing_menu()
+            file_count += 1
+            sys.stdout.write(f"\rScanned {file_count} files...")
+            sys.stdout.flush()
+
+            file_hash = hash_file(file_path)
+            if file_hash:
+                if file_hash in hashes:
+                    if file_hash not in duplicates:
+                        duplicates[file_hash] = [hashes[file_hash]]
+                    duplicates[file_hash].append(file_path)
+                else:
+                    hashes[file_hash] = file_path
+
+    print("\nScan complete.")
+    if not duplicates:
+        print("No duplicate files found.")
+    else:
+        print(f"Found {len(duplicates)} set(s) of duplicates:")
+        for i, (hash_val, files) in enumerate(duplicates.items()):
+            print(f"\n--- Set {i+1} (Size: {format_size(os.path.getsize(files[0]))}) ---")
+            for f in files:
+                print(f"  - {os.path.relpath(f, state.current_directory)}")
+
+# --- Command Handling ---
+
+def display_help():
+    """Displays the help message with all available commands."""
+    print("\n--- SelectPlus Help ---")
+    commands = {
+        "Navigation": {
+            "ls": "Refresh display.",
+            "cd <dir>": "Change directory. Use '..' to go up, '-' for previous.",
+            "cd <index>": "Enter directory by its number.",
+            "back": "Go back in history.",
+            "forward": "Go forward in history."
+        },
+        "Selection": {
+            "s <index>": "Toggle selection for an item by number.",
+            "s <start-end>": "Select a range of items (e.g., 's 5-10').",
+            "s all/clear/invert": "Select all, clear, or invert selection."
+        },
+        "File Operations": {
+            "del": "Delete selected items.",
+            "copy": "Copy selected items to clipboard.",
+            "cut": "Cut selected items to clipboard.",
+            "paste": "Paste items from clipboard here.",
+            "newfile <name>": "Create a new empty file.",
+            "newdir <name>": "Create a new directory.",
+            "ren <index/name> <new>": "Rename an item."
+        },
+        "System & View": {
+            "open <index/name>": "Open a file or directory.",
+            "view columns/list": "Change display mode.",
+            "hidden on/off": "Toggle visibility of hidden files.",
+            "cmd": "Open a new terminal in this directory.",
+            "exit/q": "Quit the application."
+        },
+        "Utilities": {
+            "find <pattern>": "Find files/dirs recursively.",
+            "info <index/name>": "Show detailed info for an item.",
+            "dupes": "Find duplicate files in current tree.",
+            "help": "Show this help message."
+        }
+    }
+    for category, cmds in commands.items():
+        print(f"\n{category}:")
+        for cmd, desc in cmds.items():
+            print(f"  {cmd:<20} {desc}")
+    print("-" * 23)
+
+def process_command(user_input):
+    """Processes the user's command input."""
+    parts = user_input.strip().split()
+    if not parts:
+        return
+
+    command = parts[0].lower()
+    args = parts[1:]
+
+    # Navigation
+    if command == "cd":
+        if not args:
+            print("[ERROR] 'cd' requires a target directory or index.")
+        else:
+            target = " ".join(args)
+            try:
+                # Try to cd by index
+                index = int(target) - 1
+                dirs, _ = get_directory_contents(state.current_directory)
+                if 0 <= index < len(dirs):
+                    change_directory(dirs[index])
+                else:
+                    print("[ERROR] Invalid directory index.")
+            except ValueError:
+                # cd by name
+                change_directory(target)
+    elif command in ["exit", "q"]:
+        state.running = False
+    elif command == "ls":
+        pass # The loop will refresh automatically
+    elif command == "back":
+        if state.history_position > 0:
+            state.history_position -= 1
+            state.current_directory = state.history[state.history_position]
+    elif command == "forward":
+        if state.history_position < len(state.history) - 1:
+            state.history_position += 1
+            state.current_directory = state.history[state.history_position]
+
+    # Selection
+    elif command in ["s", "sel", "select"]:
+        handle_selection(args)
+    
+    # File Ops
+    elif command in ["del", "rm"]:
+        delete_selected()
+    elif command == "copy":
+        copy_paste_handler('copy')
+    elif command == "cut":
+        copy_paste_handler('cut')
+    elif command == "paste":
+        paste_handler()
+    elif command == "newfile":
+        if not args: print("[ERROR] 'newfile' requires a name.")
+        else: create_item("file", " ".join(args))
+    elif command == "newdir":
+        if not args: print("[ERROR] 'newdir' requires a name.")
+        else: create_item("dir", " ".join(args))
+    elif command == "ren":
+        if len(args) < 2: print("[ERROR] 'ren' requires <old_name/index> and <new_name>.")
+        else: rename_item(args[0], " ".join(args[1:]))
+
+    # System & View
+    elif command == "open":
+        if not args: print("[ERROR] 'open' requires an index or name.")
+        else: open_file(" ".join(args))
+    elif command == "view":
+        if args and args[0].lower() in ["columns", "list"]:
+            state.view_mode = args[0].lower()
+        else:
+            print("[ERROR] Usage: view columns|list")
+    elif command == "hidden":
+        if args and args[0].lower() in ["on", "off"]:
+            state.show_hidden = (args[0].lower() == "on")
+        else:
+            print("[ERROR] Usage: hidden on|off")
+    elif command == "cmd":
+        open_terminal()
+
+    # Utilities
+    elif command == "find":
+        if not args: print("[ERROR] 'find' requires a search pattern.")
+        else: find_files(" ".join(args))
+    elif command == "info":
+        if not args: print("[ERROR] 'info' requires an index or name.")
+        else: get_item_info(" ".join(args))
+    elif command == "dupes":
+        find_duplicates()
+    elif command == "help":
+        display_help()
+    
+    else:
+        print(f"[ERROR] Unknown command: '{command}'")
+        return # Avoid full refresh for unknown command
+
+    # After a successful command, refresh the display
+    refresh_display()
+
+# --- Main Application Loop ---
+
+def main():
+    """The main entry point and loop for the application."""
+    atexit.register(lambda: print("\nExiting SelectPlus. Goodbye!"))
+    
+    # Initial display
+    refresh_display()
+
+    while state.running:
+        try:
+            prompt = f"\n{state.current_directory}> "
+            user_input = input(prompt)
+            if user_input:
+                # Process command without full refresh, let functions handle it
+                process_command(user_input)
+            else:
+                # Just pressing enter refreshes
+                refresh_display()
+
+        except KeyboardInterrupt:
+            print("\nUse 'exit' or 'q' to quit.")
+        except Exception as e:
+            print(f"\n[FATAL ERROR] An unexpected error occurred: {e}")
+            print("Please restart the application.")
+            time.sleep(3)
+
 
 if __name__ == "__main__":
-    # Configure external binaries like ffmpeg BEFORE starting the app.
-    # This is the crucial fix for portability.
-    configure_ffmpeg()
-
-    # Create and run the main application instance.
-    app = SelectPlusApp()
-    app.run()
+    main()

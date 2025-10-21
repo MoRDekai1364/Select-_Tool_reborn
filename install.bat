@@ -15,6 +15,8 @@ set "PYTHON_INSTALLER_URL=https://www.python.org/ftp/python/3.11.7/python-3.11.7
 set "FFMPEG_ZIP_URL=https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
 set "FFMPEG_ZIP_FILE=ffmpeg_download.zip"
 set "SOURCE_APP_DIR=Project Files"
+set "MAIN_SCRIPT=SelectPlus_V3.3.py"
+
 
 :: --- Main Script Logic ---
 title %APP_NAME% Installer
@@ -38,8 +40,8 @@ echo.
 
 call :check_python
 call :install_dependencies
-call :setup_ffmpeg
 call :copy_files
+call :setup_ffmpeg
 call :create_launcher_and_shortcut
 
 echo.
@@ -113,29 +115,8 @@ exit /b 0
     echo.
     goto :eof
 
-:setup_ffmpeg
-    echo [STEP 3/5] Setting up FFMPEG for media features...
-    if exist "%INSTALL_DIR%\ffmpeg.exe" (
-        echo [*] ffmpeg already exists in target. Skipping.
-    ) else (
-        echo [+] Downloading ffmpeg...
-        powershell -Command "(New-Object Net.WebClient).DownloadFile('%FFMPEG_ZIP_URL%', '%FFMPEG_ZIP_FILE%')"
-        if %errorlevel% neq 0 ( echo [!] ERROR: Failed to download ffmpeg. Media features may not work. & goto :eof )
-        
-        echo [+] Extracting ffmpeg.exe...
-        powershell -Command "Expand-Archive -Path '%FFMPEG_ZIP_FILE%' -DestinationPath 'temp_ffmpeg' -Force; Move-Item -Path 'temp_ffmpeg\*\bin\ffmpeg.exe' -Destination '%INSTALL_DIR%'; Remove-Item -Path 'temp_ffmpeg' -Recurse -Force" >nul 2>&1
-        if %errorlevel% neq 0 (
-            echo [!] ERROR: Failed to extract ffmpeg.exe.
-        ) else {
-            echo [+] ffmpeg is set up.
-        }
-        if exist "%FFMPEG_ZIP_FILE%" del "%FFMPEG_ZIP_FILE%"
-    )
-    echo.
-    goto :eof
-
 :copy_files
-    echo [STEP 4/5] Copying application files to "%INSTALL_DIR%"...
+    echo [STEP 3/5] Copying application files to "%INSTALL_DIR%"...
     if exist "%INSTALL_DIR%" (
         echo [*] Removing existing installation...
         rmdir /s /q "%INSTALL_DIR%"
@@ -151,12 +132,33 @@ exit /b 0
     echo.
     goto :eof
 
+:setup_ffmpeg
+    echo [STEP 4/5] Setting up FFMPEG for media features...
+    if exist "%INSTALL_DIR%\ffmpeg.exe" (
+        echo [*] ffmpeg already exists in target. Skipping.
+    ) else (
+        echo [+] Downloading ffmpeg...
+        powershell -Command "(New-Object Net.WebClient).DownloadFile('%FFMPEG_ZIP_URL%', '%FFMPEG_ZIP_FILE%')"
+        if %errorlevel% neq 0 ( echo [!] ERROR: Failed to download ffmpeg. Media features may not work. & goto :eof )
+        
+        echo [+] Extracting ffmpeg.exe...
+        powershell -Command "Expand-Archive -Path '%FFMPEG_ZIP_FILE%' -DestinationPath 'temp_ffmpeg' -Force; Move-Item -Path 'temp_ffmpeg\*\bin\ffmpeg.exe' -Destination '%INSTALL_DIR%'; Remove-Item -Path 'temp_ffmpeg' -Recurse -Force" >nul 2>&1
+        if %errorlevel% neq 0 (
+            echo [!] ERROR: Failed to extract ffmpeg.exe.
+        ) else (
+            echo [+] ffmpeg is set up.
+        )
+        if exist "%FFMPEG_ZIP_FILE%" del "%FFMPEG_ZIP_FILE%"
+    )
+    echo.
+    goto :eof
+
 :create_launcher_and_shortcut
     echo [STEP 5/5] Creating launcher and desktop shortcut...
     (
         echo @echo off
         echo title %APP_NAME% v%PROJECT_VERSION%
-        echo cd /d "%~dp0\src"
+        echo cd /d "%INSTALL_DIR%\src"
         echo python -O -OO "%MAIN_SCRIPT%"
         echo pause ^>nul
     ) > "%INSTALL_DIR%\run_%APP_NAME%.bat"
@@ -175,3 +177,4 @@ exit /b 0
     echo [!] Installation failed. Please check the error messages above.
     pause
     exit /b 1
+
