@@ -3,63 +3,51 @@ setlocal enabledelayedexpansion
 
 :: ##############################################################################
 :: #                                                                            #
-:: #              SelectPlus v3.3 - Portable Installer Script                   #
+:: #                SelectPlus v3.3 - System-Wide Installer                     #
 :: #                                                                            #
 :: ##############################################################################
 
 :: --- Configuration ---
-set "PROJECT_NAME=SelectPlus"
-set "PROJECT_VERSION=3.3"
-set "MAIN_SCRIPT=SelectPlus_V3.3.py"
-set "PYTHON_VERSION=3.11.7"
-set "PYTHON_ARCH=amd64"
-set "PYTHON_ZIP_URL=https://www.python.org/ftp/python/%PYTHON_VERSION%/python-%PYTHON_VERSION%-embed-%PYTHON_ARCH%.zip"
+set "APP_NAME=SelectPlus"
+set "INSTALL_DIR=%ProgramFiles%\%APP_NAME%"
+set "SOURCE_DIR=%~dp0"
+set "PYTHON_INSTALLER_URL=https://www.python.org/ftp/python/3.11.7/python-3.11.7-amd64.exe"
 set "FFMPEG_ZIP_URL=https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
-
-set "PYTHON_DIR=python"
-set "VENV_DIR=venv"
-set "APP_DIR=app"
-set "BIN_DIR=bin"
-set "PYTHON_ZIP_FILE=python_embed.zip"
-set "FFMPEG_ZIP_FILE=ffmpeg.zip"
+set "FFMPEG_ZIP_FILE=ffmpeg_download.zip"
 set "SOURCE_APP_DIR=Project Files"
-set "BASE_DIR=%~dp0"
 
 :: --- Main Script Logic ---
-title %PROJECT_NAME% v%PROJECT_VERSION% Installer
+title %APP_NAME% Installer
 
 :CHECK_ADMIN
     echo [+] Checking for administrator privileges...
     net session >nul 2>&1
     if %errorlevel% neq 0 (
-        echo [!] This installer needs administrator privileges to create shortcuts and manage files.
+        echo [!] This installer requires administrator privileges.
         echo [+] Attempting to re-launch as administrator...
         powershell -Command "Start-Process '%~f0' -Verb RunAs"
         exit
     )
-    echo [+] Running with administrator privileges.
+    echo [+] Running as administrator.
     cls
 
 echo =======================================================
-echo  Installing %PROJECT_NAME% v%PROJECT_VERSION%
+echo  Installing %APP_NAME% v3.3
 echo =======================================================
 echo.
 
-call :setup_python
-call :create_venv
-call :copy_app_files
+call :check_python
 call :install_dependencies
 call :setup_ffmpeg
-call :precompile_scripts
-call :create_launcher
+call :copy_files
+call :create_launcher_and_shortcut
 
 echo.
 echo -------------------------------------------------------
 echo.
-echo  %PROJECT_NAME% has been installed successfully!
+echo  %APP_NAME% has been installed successfully!
+echo  You can find it in: "%INSTALL_DIR%"
 echo  A shortcut has been placed on your desktop.
-echo.
-echo  Run 'run_%PROJECT_NAME%.bat' to start the application.
 echo.
 echo -------------------------------------------------------
 echo.
@@ -68,136 +56,117 @@ exit /b 0
 
 :: --- Functions ---
 
-:setup_python
-    echo [STEP 1/7] Setting up portable Python...
-    if exist "%PYTHON_DIR%\python.exe" (
-        echo [*] Portable Python already exists. Skipping download.
+:check_python
+    echo [STEP 1/5] Checking for Python 3...
+    where python >nul 2>&1
+    if %errorlevel% equ 0 (
+        echo [*] Python is already installed.
+        set "PYTHON_EXE=python"
     ) else (
-        echo [+] Downloading portable Python %PYTHON_VERSION%...
-        powershell -Command "(New-Object Net.WebClient).DownloadFile('%PYTHON_ZIP_URL%', '%PYTHON_ZIP_FILE%')"
-        if %errorlevel% neq 0 ( echo [!] ERROR: Failed to download Python. & goto :fail )
-        
-        echo [+] Extracting Python...
-        powershell -Command "Expand-Archive -Path '%PYTHON_ZIP_FILE%' -DestinationPath '%PYTHON_DIR%' -Force"
-        if %errorlevel% neq 0 ( echo [!] ERROR: Failed to extract Python. & goto :fail )
-        
-        del "%PYTHON_ZIP_FILE%"
-        
-        echo [+] Enabling pip in portable Python...
-        set "PTH_FILE="
-        for /f "tokens=*" %%f in ('dir /b "%PYTHON_DIR%\python*._pth"') do set "PTH_FILE=%%f"
-        if defined PTH_FILE (
-            powershell -Command "(Get-Content '%PYTHON_DIR%\%PTH_FILE%') -replace '#import site', 'import site' | Set-Content '%PYTHON_DIR%\%PTH_FILE%'"
+        echo [!] Python not found.
+        call :install_python
+        where python >nul 2>&1
+        if %errorlevel% neq 0 (
+            echo [!] ERROR: Python installation failed. Please restart your terminal and try again.
+            goto :fail
         )
-        "%PYTHON_DIR%\python.exe" -m ensurepip
+        set "PYTHON_EXE=python"
     )
-    echo [+] Portable Python is ready.
     echo.
     goto :eof
 
-:create_venv
-    echo [STEP 2/7] Creating Python virtual environment...
-    set "PYTHON_EXE=%BASE_DIR%%PYTHON_DIR%\python.exe"
-    set "VENV_PATH=%BASE_DIR%%VENV_DIR%"
-    if exist "%VENV_DIR%\Scripts\activate.bat" (
-        echo [*] Virtual environment already exists.
-    ) else (
-        "%PYTHON_EXE%" -m venv "%VENV_PATH%"
-        if %errorlevel% neq 0 ( echo [!] ERROR: Failed to create the virtual environment. & goto :fail )
-    )
-    echo [+] Virtual environment created.
-    echo.
-    goto :eof
-
-:copy_app_files
-    echo [STEP 3/7] Copying application files...
-    if not exist "%SOURCE_APP_DIR%" (
-        echo [!] ERROR: Source directory '%SOURCE_APP_DIR%' not found.
+:install_python
+    echo [+] Downloading Python installer...
+    set "PYTHON_INSTALLER=%SOURCE_DIR%python_installer.exe"
+    powershell -Command "(New-Object Net.WebClient).DownloadFile('%PYTHON_INSTALLER_URL%', '%PYTHON_INSTALLER%')"
+    if %errorlevel% neq 0 (
+        echo [!] ERROR: Failed to download Python.
         goto :fail
     )
-    if exist "%APP_DIR%" rmdir /s /q "%APP_DIR%"
-    xcopy "%SOURCE_APP_DIR%" "%APP_DIR%\" /E /I /Q /Y /K
-    echo [+] Application files copied to '%APP_DIR%'.
-    echo.
+    echo [+] Installing Python silently... (This may take a few minutes)
+    start /wait "" "%PYTHON_INSTALLER%" /quiet InstallAllUsers=1 PrependPath=1
+    if %errorlevel% neq 0 (
+        echo [!] ERROR: Python installation failed.
+        del "%PYTHON_INSTALLER%"
+        goto :fail
+    )
+    del "%PYTHON_INSTALLER%"
+    echo [+] Python installed successfully.
     goto :eof
 
 :install_dependencies
-    echo [STEP 4/7] Installing project dependencies...
-    set "PIP_EXE=%BASE_DIR%%VENV_DIR%\Scripts\pip.exe"
-    set "REQ_FILE=%APP_DIR%\config\requirements.txt"
-    if not exist "%REQ_FILE%" (
-        echo [!] ERROR: 'requirements.txt' not found!
+    echo [STEP 2/5] Installing required libraries...
+    set "REQ_FILE=%SOURCE_APP_DIR%\config\requirements.txt"
+     if not exist "%REQ_FILE%" (
+        echo [!] ERROR: 'requirements.txt' not found in '%SOURCE_APP_DIR%\config\'!
         goto :fail
     )
-    "%PIP_EXE%" install --upgrade pip > nul
+    "%PYTHON_EXE%" -m pip install --upgrade pip > nul
     findstr /i /c:"Pillow" "%REQ_FILE%" > nul
     if errorlevel 1 (
         echo [*] 'Pillow' not found in requirements.txt. Adding it for image processing.
         (echo Pillow) >> "%REQ_FILE%"
     )
-    "%PIP_EXE%" install -r "%REQ_FILE%"
+    "%PYTHON_EXE%" -m pip install -r "%REQ_FILE%"
     if %errorlevel% neq 0 ( echo [!] ERROR: Failed to install dependencies. & goto :fail )
-    echo [+] Dependencies installed successfully.
+    echo [+] Libraries installed successfully.
     echo.
     goto :eof
 
 :setup_ffmpeg
-    echo [STEP 5/7] Setting up FFMPEG for media features...
-    if exist "%BIN_DIR%\ffmpeg.exe" (
-        echo [*] ffmpeg already exists. Skipping download.
+    echo [STEP 3/5] Setting up FFMPEG for media features...
+    if exist "%INSTALL_DIR%\ffmpeg.exe" (
+        echo [*] ffmpeg already exists in target. Skipping.
     ) else (
         echo [+] Downloading ffmpeg...
         powershell -Command "(New-Object Net.WebClient).DownloadFile('%FFMPEG_ZIP_URL%', '%FFMPEG_ZIP_FILE%')"
         if %errorlevel% neq 0 ( echo [!] ERROR: Failed to download ffmpeg. Media features may not work. & goto :eof )
         
-        if not exist "%BIN_DIR%" mkdir "%BIN_DIR%"
         echo [+] Extracting ffmpeg.exe...
-        powershell -Command "Expand-Archive -Path '%FFMPEG_ZIP_FILE%' -DestinationPath 'temp_ffmpeg' -Force; Move-Item -Path 'temp_ffmpeg\*\bin\ffmpeg.exe' -Destination '%BIN_DIR%'; Remove-Item -Path 'temp_ffmpeg' -Recurse -Force" >nul 2>&1
+        powershell -Command "Expand-Archive -Path '%FFMPEG_ZIP_FILE%' -DestinationPath 'temp_ffmpeg' -Force; Move-Item -Path 'temp_ffmpeg\*\bin\ffmpeg.exe' -Destination '%INSTALL_DIR%'; Remove-Item -Path 'temp_ffmpeg' -Recurse -Force" >nul 2>&1
         if %errorlevel% neq 0 (
             echo [!] ERROR: Failed to extract ffmpeg.exe.
-        ) else (
+        ) else {
             echo [+] ffmpeg is set up.
-        )
+        }
         if exist "%FFMPEG_ZIP_FILE%" del "%FFMPEG_ZIP_FILE%"
     )
     echo.
     goto :eof
 
-:precompile_scripts
-    echo [STEP 6/7] Precompiling application scripts for faster startup...
-    if exist "%APP_DIR%\scripts\precompile.py" (
-        "%VENV_PATH%\Scripts\python.exe" "%APP_DIR%\scripts\precompile.py"
-    ) else (
-        echo [*] Precompile script not found, skipping.
+:copy_files
+    echo [STEP 4/5] Copying application files to "%INSTALL_DIR%"...
+    if exist "%INSTALL_DIR%" (
+        echo [*] Removing existing installation...
+        rmdir /s /q "%INSTALL_DIR%"
     )
-    echo [+] Scripts precompiled.
+    mkdir "%INSTALL_DIR%"
+    
+    xcopy "%SOURCE_APP_DIR%" "%INSTALL_DIR%\" /E /I /Y /Q
+    if %errorlevel% neq 0 (
+        echo [!] ERROR: Failed to copy application files.
+        goto :fail
+    )
+    echo [+] Application files copied successfully.
     echo.
     goto :eof
 
-:create_launcher
-    echo [STEP 7/7] Creating launcher and desktop shortcut...
+:create_launcher_and_shortcut
+    echo [STEP 5/5] Creating launcher and desktop shortcut...
     (
         echo @echo off
-        echo title %PROJECT_NAME% v%PROJECT_VERSION%
-        echo cd /d "%~dp0"
-        echo echo [+] Adding tools to session PATH...
-        echo set "PATH=%~dp0%BIN_DIR%;%PATH%"
-        echo echo [+] Activating virtual environment...
-        echo call "%VENV_DIR%\Scripts\activate.bat"
-        echo echo [+] Launching %PROJECT_NAME%...
-        echo python -O -OO "%APP_DIR%\src\%MAIN_SCRIPT%"
-        echo echo.
-        echo [+] %PROJECT_NAME% has closed. Press any key to exit.
-        echo call "%VENV_DIR%\Scripts\deactivate.bat"
+        echo title %APP_NAME% v%PROJECT_VERSION%
+        echo cd /d "%~dp0\src"
+        echo python -O -OO "%MAIN_SCRIPT%"
         echo pause ^>nul
-    ) > "run_%PROJECT_NAME%.bat"
-    echo [+] 'run_%PROJECT_NAME%.bat' created.
+    ) > "%INSTALL_DIR%\run_%APP_NAME%.bat"
+    echo [+] 'run_%APP_NAME%.bat' created in installation directory.
 
-    set "SHORTCUT_PATH=%USERPROFILE%\Desktop\%PROJECT_NAME%.lnk"
-    set "TARGET_PATH=%BASE_DIR%run_%PROJECT_NAME%.bat"
-    set "ICON_PATH=%BASE_DIR%%APP_DIR%\resources\res\images\icons\Select+ICON.ico"
-    powershell -Command "$ws = New-Object -ComObject WScript.Shell; $s = $ws.CreateShortcut('%SHORTCUT_PATH%'); $s.TargetPath = '%TARGET_PATH%'; $s.IconLocation = '%ICON_PATH%'; $s.WorkingDirectory = '%BASE_DIR%'; $s.Save()"
-    echo [+] Desktop shortcut created.
+    set "SHORTCUT_PATH=%USERPROFILE%\Desktop\%APP_NAME%.lnk"
+    set "TARGET_PATH=%INSTALL_DIR%\run_%APP_NAME%.bat"
+    set "ICON_PATH=%INSTALL_DIR%\resources\res\images\icons\Select+ICON.ico"
+    powershell -Command "$ws = New-Object -ComObject WScript.Shell; $s = $ws.CreateShortcut('%SHORTCUT_PATH%'); $s.TargetPath = '%TARGET_PATH%'; $s.IconLocation = '%ICON_PATH%'; $s.WorkingDirectory = '%INSTALL_DIR%'; $s.Save()"
+    echo [+] Desktop shortcut created successfully.
     echo.
     goto :eof
 
