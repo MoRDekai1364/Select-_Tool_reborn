@@ -1,0 +1,35 @@
+echo [INSTALLER START] %date% %time% 
+echo [INFO] Core script started from: %SOURCE_DIR% 
+echo [INFO] Target installation directory: %INSTALL_DIR% 
+echo [STATUS] Checking for administrator privileges... 
+    echo [ERROR] Administrator privileges check failed (%errorlevel%). 
+echo [STATUS] Administrator privileges confirmed. 
+echo [STATUS] Checking for Python 3... 
+    echo [INFO] Python is already installed. 
+    echo [INFO] Python not found. Starting installation. 
+        echo [ERROR] Python installation failed. 
+echo [STATUS] Downloading Python installer... 
+    echo [ERROR] Failed to download Python. 
+echo [STATUS] Installing Python silently... (This may take a few minutes) 
+    echo [ERROR] Python installation failed (%errorlevel%). 
+echo [INFO] Python installed successfully. 
+echo [STATUS] Installing required libraries... 
+    echo [ERROR] 'requirements.txt' not found at %REQ_FILE% 
+    echo [INFO] Adding 'Pillow' to requirements list. 
+echo [INFO] Libraries installed successfully. 
+echo [STATUS] Copying application files to "%INSTALL_DIR%"... 
+    echo [INFO] Removing existing installation: %INSTALL_DIR% 
+    echo [ERROR] Failed to copy application files (%errorlevel%). 
+echo [INFO] Application files copied successfully. 
+echo [STATUS] Setting up FFMPEG for media features... 
+    echo [INFO] ffmpeg already exists in target. Skipping. 
+    echo [INFO] Downloading ffmpeg... 
+    echo [STATUS] Extracting ffmpeg.exe... 
+        echo [WARNING] Failed to extract ffmpeg.exe. 
+        echo [INFO] ffmpeg is set up. 
+echo [STATUS] Creating launcher and desktop shortcut... 
+echo [INFO] Launcher and desktop shortcut created. 
+echo [INFO] Installation finished successfully. 
+echo [INSTALLER END] %date% %time% 
+echo [ERROR] Installation FAILED. Review logs above. 
+echo [INSTALLER END] %date% %time% 
