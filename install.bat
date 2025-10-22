@@ -15,7 +15,7 @@ set "PYTHON_INSTALLER_URL=https://www.python.org/ftp/python/3.11.7/python-3.11.7
 set "FFMPEG_ZIP_URL=https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
 set "FFMPEG_ZIP_FILE=ffmpeg_download.zip"
 set "SOURCE_APP_DIR=Project Files"
-set "MAIN_SCRIPT=SelectPlus_V3.3.py"
+set "MAIN_SCRIPT=SelectPlus.py"
 
 
 :: --- Main Script Logic ---
