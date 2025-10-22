@@ -12,3 +12,4 @@ moviepy>=1.0.3
 # Note: Some features may require additional system dependencies:
 # - For audio processing: ffmpeg
 # - For video processing: ffmpeg, ImageIO-ffmpeg
+Pillow

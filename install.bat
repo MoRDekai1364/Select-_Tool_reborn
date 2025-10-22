@@ -31,7 +31,7 @@ title %APP_NAME% Installer
         exit
     )
     echo [+] Running as administrator.
-    cls
+cls
 
 echo =======================================================
 echo  Installing %APP_NAME% v3.3
@@ -75,7 +75,7 @@ exit /b 0
         set "PYTHON_EXE=python"
     )
     echo.
-    goto :eof
+goto :eof
 
 :install_python
     echo [+] Downloading Python installer...
@@ -94,11 +94,12 @@ exit /b 0
     )
     del "%PYTHON_INSTALLER%"
     echo [+] Python installed successfully.
-    goto :eof
+goto :eof
 
 :install_dependencies
     echo [STEP 2/5] Installing required libraries...
-    set "REQ_FILE=%SOURCE_APP_DIR%\config\requirements.txt"
+    REM Correction 1: Use absolute path for requirements.txt
+    set "REQ_FILE=%SOURCE_DIR%%SOURCE_APP_DIR%\config\requirements.txt"
      if not exist "%REQ_FILE%" (
         echo [!] ERROR: 'requirements.txt' not found in '%SOURCE_APP_DIR%\config\'!
         goto :fail
@@ -107,13 +108,14 @@ exit /b 0
     findstr /i /c:"Pillow" "%REQ_FILE%" > nul
     if errorlevel 1 (
         echo [*] 'Pillow' not found in requirements.txt. Adding it for image processing.
+  
         (echo Pillow) >> "%REQ_FILE%"
     )
     "%PYTHON_EXE%" -m pip install -r "%REQ_FILE%"
     if %errorlevel% neq 0 ( echo [!] ERROR: Failed to install dependencies. & goto :fail )
     echo [+] Libraries installed successfully.
-    echo.
-    goto :eof
+echo.
+goto :eof
 
 :copy_files
     echo [STEP 3/5] Copying application files to "%INSTALL_DIR%"...
@@ -123,14 +125,15 @@ exit /b 0
     )
     mkdir "%INSTALL_DIR%"
     
-    xcopy "%SOURCE_APP_DIR%" "%INSTALL_DIR%\" /E /I /Y /Q
+    REM Correction 2: Use absolute path for the source folder
+    xcopy "%SOURCE_DIR%%SOURCE_APP_DIR%" "%INSTALL_DIR%\" /E /I /Y /Q
     if %errorlevel% neq 0 (
         echo [!] ERROR: Failed to copy application files.
         goto :fail
     )
     echo [+] Application files copied successfully.
     echo.
-    goto :eof
+goto :eof
 
 :setup_ffmpeg
     echo [STEP 4/5] Setting up FFMPEG for media features...
@@ -138,20 +141,24 @@ exit /b 0
         echo [*] ffmpeg already exists in target. Skipping.
     ) else (
         echo [+] Downloading ffmpeg...
-        powershell -Command "(New-Object Net.WebClient).DownloadFile('%FFMPEG_ZIP_URL%', '%FFMPEG_ZIP_FILE%')"
+        REM Correction 3: Save FFMPEG ZIP file to the script's absolute directory
+        powershell -Command "(New-Object Net.WebClient).DownloadFile('%FFMPEG_ZIP_URL%', '%SOURCE_DIR%%FFMPEG_ZIP_FILE%')"
         if %errorlevel% neq 0 ( echo [!] ERROR: Failed to download ffmpeg. Media features may not work. & goto :eof )
         
         echo [+] Extracting ffmpeg.exe...
-        powershell -Command "Expand-Archive -Path '%FFMPEG_ZIP_FILE%' -DestinationPath 'temp_ffmpeg' -Force; Move-Item -Path 'temp_ffmpeg\*\bin\ffmpeg.exe' -Destination '%INSTALL_DIR%'; Remove-Item -Path 'temp_ffmpeg' -Recurse -Force" >nul 2>&1
+        REM Correction 4: Use absolute paths for the zip file and the temp directory
+        powershell -Command "Expand-Archive -Path '%SOURCE_DIR%%FFMPEG_ZIP_FILE%' -DestinationPath '%SOURCE_DIR%temp_ffmpeg' -Force; Move-Item -Path '%SOURCE_DIR%temp_ffmpeg\*\bin\ffmpeg.exe' -Destination '%INSTALL_DIR%'; Remove-Item -Path '%SOURCE_DIR%temp_ffmpeg' -Recurse -Force" >nul 2>&1
         if %errorlevel% neq 0 (
             echo [!] ERROR: Failed to extract ffmpeg.exe.
         ) else (
             echo [+] ffmpeg is set up.
         )
-        if exist "%FFMPEG_ZIP_FILE%" del "%FFMPEG_ZIP_FILE%"
+        
+        REM Correction 5: Delete FFMPEG ZIP file from its absolute location
+        if exist "%SOURCE_DIR%%FFMPEG_ZIP_FILE%" del "%SOURCE_DIR%%FFMPEG_ZIP_FILE%"
     )
     echo.
-    goto :eof
+goto :eof
 
 :create_launcher_and_shortcut
     echo [STEP 5/5] Creating launcher and desktop shortcut...
@@ -163,18 +170,16 @@ exit /b 0
         echo pause ^>nul
     ) > "%INSTALL_DIR%\run_%APP_NAME%.bat"
     echo [+] 'run_%APP_NAME%.bat' created in installation directory.
-
     set "SHORTCUT_PATH=%USERPROFILE%\Desktop\%APP_NAME%.lnk"
     set "TARGET_PATH=%INSTALL_DIR%\run_%APP_NAME%.bat"
     set "ICON_PATH=%INSTALL_DIR%\resources\res\images\icons\Select+ICON.ico"
     powershell -Command "$ws = New-Object -ComObject WScript.Shell; $s = $ws.CreateShortcut('%SHORTCUT_PATH%'); $s.TargetPath = '%TARGET_PATH%'; $s.IconLocation = '%ICON_PATH%'; $s.WorkingDirectory = '%INSTALL_DIR%'; $s.Save()"
     echo [+] Desktop shortcut created successfully.
-    echo.
-    goto :eof
+echo.
+goto :eof
 
 :fail
     echo.
     echo [!] Installation failed. Please check the error messages above.
-    pause
+pause
     exit /b 1
-
